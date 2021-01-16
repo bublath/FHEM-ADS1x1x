@@ -126,6 +126,7 @@ sub I2C_ADS1x1x_Initialize($) {
 												#"latching_comparator:on,off ".
 												#"comparator_queue_disable:AfterOneConversion,AfterTwoConversion,AfterFourConversion,disable ".
 												"poll_interval ".
+												"poll_interleave ".
 												"$readingFnAttributes";
 }
 ################################### Todo: Set or Attribute for Mode? Other sets needed?
@@ -137,7 +138,7 @@ sub I2C_ADS1x1x_Set($@) {					#
  
 	if ( $cmd && $cmd eq "Update") {
 		#Make sure there is no reading cycle running and re-start polling (which starts with an inital read)
-		RemoveInternalTimer($hash); #Klappt nicht, also auch per "state" checken
+		RemoveInternalTimer($hash) if ( defined (AttrVal($hash->{NAME}, "poll_interval", undef)) ); 
 		#readingsSingleUpdate($hash, 'state', 'Polling',0);
 		I2C_ADS1x1x_Poll($hash);
 		return undef;
@@ -154,16 +155,59 @@ sub I2C_ADS1x1x_Set($@) {					#
 }
 ################################### 
 sub I2C_ADS1x1x_Get($@) {
+	my ($hash) = @_;
+	Log3 $hash->{NAME}, 3, $hash->{NAME}." => Get";
+	$hash->{helper}{state}=0; #Reset states just in case
+	#InternalTimer(gettimeofday()+1, \&I2C_ADS1x1x_Execute, $hash,0);
 	return undef;
 }
 
-sub I2C_ADS1x1x_ReadData($@) {
-	my ($hash, @a) = @_;
-	my $name =$a[0];
+sub I2C_ADS1x1x_Execute($@) {
+	my ($hash) = @_;
+	my $state=$hash->{helper}{state};
+	my $device=AttrVal($hash->{NAME}, "device", "ADS1115");
+	my $channels=1;
+	#Default time between reading channels
+	my $nexttimer=AttrVal($hash->{NAME}, 'poll_interleave', 0.008);
+	if (!defined($state)) {$state=0};
+	if ($state%2) {$nexttimer=0.008;} #8 ms conversiontime for even numbers
+	if ($device =~ m/^ADS1[0|1]15$/i ) {$channels=4;} # Only these two devices have 4 channels
+	if ($state<$channels*2) {
+		$hash->{helper}{state}+=1;	
+	} else {
+		$hash->{helper}{state}=0;
+		#Interleave to next complete read cycle is poll interval
+		$nexttimer = AttrVal($hash->{NAME}, 'poll_interval', 5)*60;
+	}
+	Log3 $hash->{NAME}, 3, $hash->{NAME}." => Processing state $state timer $nexttimer channels: $channels newstate:".$hash->{helper}{state};
 	if (!defined AttrVal($hash->{NAME}, "IODev", undef)) {return;}
+	if ($state==0) {
+		I2C_ADS1x1x_InitConfig($hash,0);
+	} elsif ($state==1) {
+		I2C_ADS1x1x_ReadData($hash,0);
+	} elsif ($state==2) {
+		I2C_ADS1x1x_InitConfig($hash,1);
+	} elsif ($state==3) {
+		I2C_ADS1x1x_ReadData($hash,1);
+	} elsif ($state==4) {
+		I2C_ADS1x1x_InitConfig($hash,2);
+	} elsif ($state==5) {
+		I2C_ADS1x1x_ReadData($hash,2);
+	} elsif ($state==6) {
+		I2C_ADS1x1x_InitConfig($hash,3);
+	} elsif ($state==7) {
+		I2C_ADS1x1x_ReadData($hash,3);
+	}
+	
+	#Initalize next Timer for Reading Results in 8ms (time required for conversion to be ready)
+	InternalTimer(gettimeofday()+$nexttimer, \&I2C_ADS1x1x_Execute, $hash,0);
+	return undef;
+}
+
+sub I2C_ADS1x1x_InitConfig(@) {
+	my ($hash, $sensor) = @_;
 	my $phash = $hash->{IODev};
 	my $pname = $phash->{NAME};
-	my %sendpackage = ();
 	my $mux=AttrVal($hash->{NAME}, "mux", "SINGLE");
 	my $device=AttrVal($hash->{NAME}, "device", "ADS1115");
 	my $rate=AttrVal($hash->{NAME}, "data_rate", "1x");
@@ -173,76 +217,39 @@ sub I2C_ADS1x1x_ReadData($@) {
 	my $cqueue=AttrVal($hash->{NAME}, "comparator_queue_disable", "AfterOneConversion");
 	my $cpol=AttrVal($hash->{NAME}, "comparator_polarity", "ActiveLow");
 	return undef if ($mux ne "SINGLE"); #Only SINGLE mode supported
-	my $channels=1; 
-	if ($device =~ m/^ADS1[0|1]15$/i) {$channels=4;} # Only these two devices have 4 channels
-	foreach (0..($channels-1)) {
-		my $sensor=$_;
-		my $gain=AttrVal($hash->{NAME}, "a".$sensor."_gain", "4V"); 
-		my $mode=AttrVal($hash->{NAME}, "a".$sensor."_mode", "RAW");
-		my $sensval=$mux."_".$sensor;
-		if ($mode ne "off") {
-			my $reg=1;
-			Log3 $name, 5, $hash->{NAME}." => $pname Config:".$sensval." ".$rate." ".$opmode." ".$cmode." ".$lcomp." ".$cqueue." ".$cpol;	
-			my $config = $I2C_ADS1x1x_Config{'State'}{SINGLE}|
-				$I2C_ADS1x1x_Config{'Mux'}{$sensval}|
-				$I2C_ADS1x1x_Config{'Data_Rate'}{$rate}{code}|
-				$I2C_ADS1x1x_Config{'Gain'}{$gain}{code}|
-				$I2C_ADS1x1x_Config{'Operation_Mode'}{$opmode}|
-				$I2C_ADS1x1x_Config{'Comparator_Mode'}{$cmode}|
-				$I2C_ADS1x1x_Config{'Latching_Comparator'}{$lcomp}|
-				$I2C_ADS1x1x_Config{'Comparator_Queue_Disable'}{$cqueue}|				
-				$I2C_ADS1x1x_Config{'Comparator_Polarity'}{$cpol};
+	my $gain=AttrVal($hash->{NAME}, "a".$sensor."_gain", "4V"); 
+	my $mode=AttrVal($hash->{NAME}, "a".$sensor."_mode", "RAW");
+	my $sensval=$mux."_".$sensor;
+	if ($mode ne "off") {
+		Log3 $hash->{NAME}, 5, $hash->{NAME}." => $pname Config:".$sensval." ".$rate." ".$opmode." ".$cmode." ".$lcomp." ".$cqueue." ".$cpol;	
+		my $config = $I2C_ADS1x1x_Config{'State'}{SINGLE}|
+			$I2C_ADS1x1x_Config{'Mux'}{$sensval}|
+			$I2C_ADS1x1x_Config{'Data_Rate'}{$rate}{code}|
+			$I2C_ADS1x1x_Config{'Gain'}{$gain}{code}|
+			$I2C_ADS1x1x_Config{'Operation_Mode'}{$opmode}|
+			$I2C_ADS1x1x_Config{'Comparator_Mode'}{$cmode}|
+			$I2C_ADS1x1x_Config{'Latching_Comparator'}{$lcomp}|
+			$I2C_ADS1x1x_Config{'Comparator_Queue_Disable'}{$cqueue}|				
+			$I2C_ADS1x1x_Config{'Comparator_Polarity'}{$cpol};
 				
-			Log3 $name, 5, $hash->{NAME}." => $pname Reading from ADS1x1x_".$sensor." with config".sprintf("%b",$config);
-			my $low_byte = $config & 0xff;
-			my $high_byte = ($config & 0xff00) >> 8;	
-			%sendpackage = ( i2caddress => $hash->{I2C_Address}, direction => "i2cwrite", reg=> $reg, sensor=>$sensor, data => $high_byte. " " .$low_byte);
-			return "$name: no IO device defined" unless ($hash->{IODev});
-			Log3 $name, 5, $hash->{NAME}." => $pname adr:".$hash->{I2C_Address}." Reg:$reg Byte0:$high_byte Byte1:$low_byte";
-			#Now configure the device
-			my $triggertime=gettimeofday()+($sensor+0.001);
-			my @params = ($hash->{NAME},$pname,$phash,$triggertime, %sendpackage);
-			Log3 $name, 3, "============== Trigger Config ".$triggertime;
-            InternalTimer($triggertime, \&I2C_ADS1x1x_InitConversion, \@params,0);
-		    #CallFn($pname, "I2CWrtFn", $phash, \%sendpackage);
-			$reg=0; # Convert Mode
-			%sendpackage = ( i2caddress => $hash->{I2C_Address}, direction => "i2cread", reg=> $reg, sensor=>$sensor, gain=>$gain, nbyte => 2);
-			#And read the results
-			$triggertime=gettimeofday()+($sensor+0.009);
-			my @params2 = ($hash->{NAME},$pname,$phash,$triggertime, %sendpackage);
-			Log3 $name, 3, "============== Trigger Read ".$triggertime;
-            InternalTimer($triggertime, \&I2C_ADS1x1x_ReadResults, \@params2,0);
-			#usleep(8000); # Wait 8ms for the result to be ready
-			#CallFn($pname, "I2CWrtFn", $phash, \%sendpackage);
-			#Reply is callback to I2CRec function
-		}
+		my $low_byte = $config & 0xff;
+		my $high_byte = ($config & 0xff00) >> 8;	
+		my %sendpackage = ( i2caddress => $hash->{I2C_Address}, direction => "i2cwrite", reg=> 1, sensor=>$sensor, data => $high_byte. " " .$low_byte);
+		Log3 $hash->{NAME}, 4, $hash->{NAME}." => $pname CONFIG adr:".$hash->{I2C_Address}." Sensor $sensor Byte0:$high_byte Byte1:$low_byte";
+	    CallFn($pname, "I2CWrtFn", $phash, \%sendpackage);
 	}
-	my $triggertime=gettimeofday()+0.05;
-	InternalTimer($triggertime, \&I2C_ADS1x1x_ConversionDone,$hash,0);
 }
 
-sub I2C_ADS1x1x_ConversionDone($) {
-	my ($hash)=@_;
-	#Reset the flag that avoids mixed calling
-	readingsSingleUpdate($hash, 'state', 'Polling',0);
+sub I2C_ADS1x1x_ReadData(@) {
+	my ($hash, $sensor) = @_;
+	my $phash = $hash->{IODev};
+	my $pname = $phash->{NAME};
+	#Gain needs to be passed through for calculation
+	my $gain=AttrVal($hash->{NAME}, "a".$sensor."_gain", "4V"); 
+	my %sendpackage = ( i2caddress => $hash->{I2C_Address}, direction => "i2cread", reg=> 0, sensor=>$sensor, gain=>$gain, nbyte => 2);
+	Log3 $hash->{NAME}, 4, $hash->{NAME}." => $pname READ adr:".$hash->{I2C_Address}." Sensor $sensor Gain $gain";
+	CallFn($pname, "I2CWrtFn", $phash, \%sendpackage);
 }
-
-sub I2C_ADS1x1x_InitConversion($) {
-  my $ref = $_[0];
-  my @params = @$ref;
-  my ($name,$pname,$phash,$times,%sendpackage) = @params;
-  Log3 $name, 3, "$name ============== INIT ".$sendpackage{sensor}." at ".$times;
-  CallFn($pname, "I2CWrtFn", $phash, \%sendpackage);
-}
-
-sub I2C_ADS1x1x_ReadResults($) {
-  my $ref = $_[0];
-  my @params = @$ref;
-  my ($name,$pname,$phash,$times,%sendpackage) = @params;
-  Log3 $name, 3, "$name ============== READ ".$sendpackage{sensor}." at ".$times;
-  CallFn($pname, "I2CWrtFn", $phash, \%sendpackage);
-}
-
 
 ################################### 
 sub I2C_ADS1x1x_Attr(@) {					#
@@ -260,7 +267,7 @@ sub I2C_ADS1x1x_Attr(@) {					#
     if ( defined($val) ) {
       if ( looks_like_number($val) && $val > 0) {
         RemoveInternalTimer($hash);
-        InternalTimer(1, 'I2C_ADS1x1x_Poll', $hash, 0);
+        InternalTimer(1, 'I2C_ADS1x1x_Execute', $hash, 0);
       } else {
         $msg = "$hash->{NAME}: Wrong poll intervall defined. poll_interval must be a number > 0";
       }    
@@ -284,6 +291,7 @@ sub I2C_ADS1x1x_Attr(@) {					#
 ################################### 
 sub I2C_ADS1x1x_Define($$) {			#
  my ($hash, $def) = @_;
+ Log3 $hash->{NAME}, 3, $hash->{NAME}." => Define";
  my @a = split("[ \t]+", $def);
  readingsSingleUpdate($hash, 'state', 'Defined',0);
  if ($main::init_done) {
@@ -297,6 +305,8 @@ sub I2C_ADS1x1x_Init($$) {				#
 	my ( $hash, $args ) = @_;
 	#my @a = split("[ \t]+", $args);
 	my $name = $hash->{NAME};
+	Log3 $hash->{NAME}, 3, $hash->{NAME}." => Init";
+	$hash->{helper}{state}=0; #initalize state machine
 	if (defined $args && int(@$args) != 1)	{
 		return "Define: Wrong syntax. Usage:\n" .
 		       "define <name> I2C_ADS1x1x <i2caddress>";
@@ -309,6 +319,9 @@ sub I2C_ADS1x1x_Init($$) {				#
   	AssignIoPort($hash);
 	readingsSingleUpdate($hash, 'state', 'Initialized',0);
 	I2C_ADS1x1x_Set($hash, $name, "setfromreading");
+	my $pollInterval = AttrVal($hash->{NAME}, 'poll_interval', 0);
+	Log3 $hash->{NAME}, 3, $hash->{NAME}." => Init: Timer interval $pollInterval";
+	InternalTimer(gettimeofday() + ($pollInterval * 60), 'I2C_ADS1x1x_Poll', $hash, 0) if ($pollInterval > 0);
 	return;
 }
 
@@ -333,16 +346,6 @@ sub I2C_ADS1x1x_Undef($$) {				#
 	RemoveInternalTimer($hash) if ( defined (AttrVal($hash->{NAME}, "poll_interval", undef)) ); 
 	return undef;
 }
-################################### 
-sub I2C_ADS1x1x_Poll($) {					# for attr poll_intervall -> readout pin values
-	my ($hash) = @_;
-	my $devstate=ReadingsVal($hash->{NAME},"state",0);
-	if ($devstate eq "Conversion")  {return;} # Skip conversion is still running
-	readingsSingleUpdate($hash, 'state', 'Conversion',0);
-	I2C_ADS1x1x_ReadData($hash, $hash->{NAME});	# Read values
-	my $pollInterval = AttrVal($hash->{NAME}, 'poll_interval', 0);
-	InternalTimer(gettimeofday() + ($pollInterval * 60), 'I2C_ADS1x1x_Poll', $hash, 0) if ($pollInterval > 0);
-} 
 
 # Calculate temperature for PT1000/PT100 platinum temperature sensors
 # ax_r0 = Resistance in Ohm at zero degrees C
