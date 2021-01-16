@@ -100,7 +100,7 @@ sub I2C_ADS1x1x_Initialize($) {
   $hash->{AttrFn}    = 	"I2C_ADS1x1x_Attr";
   $hash->{SetFn}     = 	"I2C_ADS1x1x_Set";
   $hash->{StateFn}   =  "I2C_ADS1x1x_State";
-  $hash->{GetFn}     = 	"I2C_ADS1x1x_Poll";
+  $hash->{GetFn}     = 	"I2C_ADS1x1x_Get";
   $hash->{UndefFn}   = 	"I2C_ADS1x1x_Undef";
   $hash->{I2CRecFn}  = 	"I2C_ADS1x1x_I2CRec";
   $hash->{AttrList}  = 	"IODev do_not_notify:1,0 ignore:1,0 showtime:1,0 ".
@@ -154,6 +154,10 @@ sub I2C_ADS1x1x_Set($@) {					#
 }
 ################################### 
 sub I2C_ADS1x1x_Get($@) {
+	return undef;
+}
+
+sub I2C_ADS1x1x_ReadData($@) {
 	my ($hash, @a) = @_;
 	my $name =$a[0];
 	if (!defined AttrVal($hash->{NAME}, "IODev", undef)) {return;}
@@ -196,7 +200,7 @@ sub I2C_ADS1x1x_Get($@) {
 			return "$name: no IO device defined" unless ($hash->{IODev});
 			Log3 $name, 5, $hash->{NAME}." => $pname adr:".$hash->{I2C_Address}." Reg:$reg Byte0:$high_byte Byte1:$low_byte";
 			#Now configure the device
-			my $triggertime=gettimeofday()+($sensor+0.1);
+			my $triggertime=gettimeofday()+($sensor+0.001);
 			my @params = ($hash->{NAME},$pname,$phash,$triggertime, %sendpackage);
 			Log3 $name, 3, "============== Trigger Config ".$triggertime;
             InternalTimer($triggertime, \&I2C_ADS1x1x_InitConversion, \@params,0);
@@ -204,7 +208,7 @@ sub I2C_ADS1x1x_Get($@) {
 			$reg=0; # Convert Mode
 			%sendpackage = ( i2caddress => $hash->{I2C_Address}, direction => "i2cread", reg=> $reg, sensor=>$sensor, gain=>$gain, nbyte => 2);
 			#And read the results
-			$triggertime=gettimeofday()+($sensor+0.9);
+			$triggertime=gettimeofday()+($sensor+0.009);
 			my @params2 = ($hash->{NAME},$pname,$phash,$triggertime, %sendpackage);
 			Log3 $name, 3, "============== Trigger Read ".$triggertime;
             InternalTimer($triggertime, \&I2C_ADS1x1x_ReadResults, \@params2,0);
@@ -213,7 +217,7 @@ sub I2C_ADS1x1x_Get($@) {
 			#Reply is callback to I2CRec function
 		}
 	}
-	my $triggertime=gettimeofday()+5;
+	my $triggertime=gettimeofday()+0.05;
 	InternalTimer($triggertime, \&I2C_ADS1x1x_ConversionDone,$hash,0);
 }
 
@@ -335,7 +339,7 @@ sub I2C_ADS1x1x_Poll($) {					# for attr poll_intervall -> readout pin values
 	my $devstate=ReadingsVal($hash->{NAME},"state",0);
 	if ($devstate eq "Conversion")  {return;} # Skip conversion is still running
 	readingsSingleUpdate($hash, 'state', 'Conversion',0);
-	I2C_ADS1x1x_Get($hash, $hash->{NAME});	# Read values
+	I2C_ADS1x1x_ReadData($hash, $hash->{NAME});	# Read values
 	my $pollInterval = AttrVal($hash->{NAME}, 'poll_interval', 0);
 	InternalTimer(gettimeofday() + ($pollInterval * 60), 'I2C_ADS1x1x_Poll', $hash, 0) if ($pollInterval > 0);
 } 
