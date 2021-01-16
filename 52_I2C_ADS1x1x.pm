@@ -121,7 +121,7 @@ sub I2C_ADS1x1x_Initialize($) {
 												"mux:SINGLE ".
 												"device:ADS1013,ADS1014,ADS1015,ADS1113,ADS1114,ADS1115 ".
 												#"comparator_polarity:ActiveLow,ActiveHigh ".
-												"operation_mode:SingleShot,Continuously ".
+												#"operation_mode:SingleShot,Continuously ".  ### Does not make sense with multiple inputs
 												#"comparator_mode:Traditional,Window ".
 												#"latching_comparator:on,off ".
 												#"comparator_queue_disable:AfterOneConversion,AfterTwoConversion,AfterFourConversion,disable ".
@@ -140,7 +140,7 @@ sub I2C_ADS1x1x_Set($@) {					#
 		I2C_ADS1x1x_Get($hash, $name);
 		return undef;
 	} else {
-		my $list = "Update:noArg";
+		my $list = "Update:noArg, Reopen:noArg";
 		return "Unknown argument $a[1], choose one of " . $list if defined $list;
 		return "Unknown argument $a[1]";
 	}
@@ -191,7 +191,7 @@ sub I2C_ADS1x1x_Get($@) {
 			return "$name: no IO device defined" unless ($hash->{IODev});
 			Log3 $name, 5, $hash->{NAME}." => $pname adr:".$hash->{I2C_Address}." Reg:$reg Byte0:$high_byte Byte1:$low_byte";
 			#Now configure the device
-			CallFn($pname, "I2CWrtFn", $phash, \%sendpackage);
+		    CallFn($pname, "I2CWrtFn", $phash, \%sendpackage);
 			$reg=0; # Convert Mode
 			%sendpackage = ( i2caddress => $hash->{I2C_Address}, direction => "i2cread", reg=> $reg, sensor=>$sensor, gain=>$gain, nbyte => 2);
 			#And read the results
@@ -242,7 +242,7 @@ sub I2C_ADS1x1x_Attr(@) {					#
 sub I2C_ADS1x1x_Define($$) {			#
  my ($hash, $def) = @_;
  my @a = split("[ \t]+", $def);
- $hash->{STATE} = 'defined';
+ readingsSingleUpdate($hash, 'state', 'Defined',0);
  $hash->{helper}{InvrtPorts} = 0;
  $hash->{helper}{InputPorts} = 0;
  if ($main::init_done) {
@@ -266,7 +266,7 @@ sub I2C_ADS1x1x_Init($$) {				#
  		return "$name I2C Address not valid";
 	}
   	AssignIoPort($hash);
-	$hash->{STATE} = 'Initialized';
+	readingsSingleUpdate($hash, 'state', 'Initialized',0);
 	I2C_ADS1x1x_Set($hash, $name, "setfromreading");
 	return;
 }
@@ -283,25 +283,7 @@ sub I2C_ADS1x1x_Catch($) {
 ################################### 
 sub I2C_ADS1x1x_State($$$$) {			#reload readings at FHEM start
 	my ($hash, $tim, $sname, $sval) = @_;
-	Log3 $hash, 4, "$hash->{NAME}: $sname kann auf $sval wiederhergestellt werden $tim";
-	if ($sname =~ m/^Port[0-7]$/i) {
-		my $po = $sname; #noch �ndern 
-		$po =~ tr/[a-zA-Z]//d;			#Nummer aus String extrahieren
-		#my @inports = sort(split(/\D+/,AttrVal($hash->{NAME}, "InputPorts", "")));
-		unless ( ((1 << $po) & $hash->{helper}{InputPorts}) != 0 ) {
-			my %onstart = split /[,=]/, AttrVal($hash->{NAME}, "OnStartup", "");
-			if ( exists($onstart{$po}) && exists($setsP{$onstart{$po}})) {
-				Log3 $hash, 5, "$hash->{NAME}: $sname soll auf $onstart{$po} gesetzt werden";
-				readingsSingleUpdate($hash,$sname, $onstart{$po}, 1);
-			} else {
-				Log3 $hash, 5, "$hash->{NAME}: $sname soll auf Altzustand: $sval gesetzt werden";
-				$hash->{READINGS}{$sname}{VAL} = $sval;
-				$hash->{READINGS}{$sname}{TIME} = $tim;
-			}
-		} else {
-			Log3 $hash, 5, "$hash->{NAME}: $sname ist Eingang";
-		}
-	} 
+	#No persistant data needed, using only attributes
 	return undef;
 }
 ################################### 
@@ -339,6 +321,7 @@ sub I2C_ADS1x1x_RTD($@) {
 # ax_b = B-Value according to datasheet (for 50K often 3950)
 sub I2C_ADS1x1x_NTC($@) {
 	my ($resistance,$sensor,$r0,$bval) = @_;
+	if ($resistance<0) {return 0;} # Prevent issue in error case
 	my $steinhart;
 	$steinhart = $resistance / $r0;    # (R/Ro)
 	$steinhart = log($steinhart); # ln(R/Ro)
@@ -367,7 +350,7 @@ sub I2C_ADS1x1x_I2CRec($@) {				# ueber CallFn vom physical aufgerufen
 	if ($clientmsg->{direction} && $clientmsg->{$pname . "_SENDSTAT"} && $clientmsg->{$pname . "_SENDSTAT"} eq "Ok") {
 		readingsBeginUpdate($hash);
 		if ($clientmsg->{direction} eq "i2cread" && defined($clientmsg->{received})) {
-			readingsBulkUpdate($hash, 'state', $clientmsg->{$pname . "_SENDSTAT"});
+			readingsBulkUpdateIfChanged($hash, 'state', 'Active');
 			my ($high,$low) = split(/ /, $clientmsg->{received});
 			my $value= $high<<8|$low;
 			Log3 $hash,5 , "$name:value:$value";
@@ -532,6 +515,7 @@ sub I2C_ADS1x1x_I2CRec($@) {				# ueber CallFn vom physical aufgerufen
 		<br>		
 		<li>operation_mode<br>
 			<ul>
+			Not implemented, since Continuous Mode make no sense when using multiple input registers and is meant to read values in very high speed (e.g. one value every 8 ms) which IMHO makes no sense with FHEM.<br> 
 			<li>SingleShot: Do one reading and then power down<br>
 			<li>Continuously: Keep powered on and continiously read data<br>
 			</ul>
@@ -600,11 +584,13 @@ sub I2C_ADS1x1x_I2CRec($@) {				# ueber CallFn vom physical aufgerufen
 	<ul>
 		<li>comparator_mode(Traditional|Window)<br>
 			<ul>
+			Not implemented.
 			</ul>
 		</li>
 		<br>
 		<li>comparator_polarity (ActiveHigh|ActiveLow)<br>
 			<ul>
+			Not implemented.
 			</ul>
 		</li>
 		<br>
@@ -616,6 +602,7 @@ sub I2C_ADS1x1x_I2CRec($@) {				# ueber CallFn vom physical aufgerufen
 		<br>		
 		<li>latching_comparator (on|off)<br>
 			<ul>
+			Not implemented.
 			</ul>
 		</li>
 		<br>			
