@@ -140,13 +140,12 @@ sub I2C_ADS1x1x_Set($@) {					#
 		#Make sure there is no reading cycle running and re-start polling (which starts with an inital read)
 		RemoveInternalTimer($hash) if ( defined (AttrVal($hash->{NAME}, "poll_interval", undef)) ); 
 		#readingsSingleUpdate($hash, 'state', 'Polling',0);
-		I2C_ADS1x1x_Poll($hash);
-		return undef;
-	} elsif ($cmd && $cmd eq "Reopen") {
-		I2C_ADS1x1x_Initialize($hash);
+		$hash->{helper}{state}=0; 
+		Log3 $hash->{NAME}, 3, $hash->{NAME}." => Update - reset state and restart time immediately";
+		InternalTimer(gettimeofday() + 1, 'I2C_ADS1x1x_Execute', $hash, 0);
 		return undef;
 	} else {
-		my $list = "Update:noArg Reopen:noArg";
+		my $list = "Update:noArg";
 		return "Unknown argument $a[1], choose one of " . $list if defined $list;
 		return "Unknown argument $a[1]";
 	}
@@ -158,7 +157,6 @@ sub I2C_ADS1x1x_Get($@) {
 	my ($hash) = @_;
 	Log3 $hash->{NAME}, 3, $hash->{NAME}." => Get";
 	$hash->{helper}{state}=0; #Reset states just in case
-	#InternalTimer(gettimeofday()+1, \&I2C_ADS1x1x_Execute, $hash,0);
 	return undef;
 }
 
@@ -169,15 +167,16 @@ sub I2C_ADS1x1x_Execute($@) {
 	my $channels=1;
 	#Default time between reading channels
 	my $nexttimer=AttrVal($hash->{NAME}, 'poll_interleave', 0.008);
+	my $interleave=$nexttimer;
 	if (!defined($state)) {$state=0};
-	if ($state%2) {$nexttimer=0.008;} #8 ms conversiontime for even numbers
+	if ($state%2 == 0) {$nexttimer=0.008;} #8 ms conversiontime for even numbers
 	if ($device =~ m/^ADS1[0|1]15$/i ) {$channels=4;} # Only these two devices have 4 channels
-	if ($state<$channels*2) {
+	if ($state<($channels*2-1)) {
 		$hash->{helper}{state}+=1;	
 	} else {
 		$hash->{helper}{state}=0;
 		#Interleave to next complete read cycle is poll interval
-		$nexttimer = AttrVal($hash->{NAME}, 'poll_interval', 5)*60;
+		$nexttimer = AttrVal($hash->{NAME}, 'poll_interval', 5)*60 - $channels*(0.008+$interleave); #Substract channel timers to have more or less constant interval
 	}
 	Log3 $hash->{NAME}, 3, $hash->{NAME}." => Processing state $state timer $nexttimer channels: $channels newstate:".$hash->{helper}{state};
 	if (!defined AttrVal($hash->{NAME}, "IODev", undef)) {return;}
@@ -319,9 +318,9 @@ sub I2C_ADS1x1x_Init($$) {				#
   	AssignIoPort($hash);
 	readingsSingleUpdate($hash, 'state', 'Initialized',0);
 	I2C_ADS1x1x_Set($hash, $name, "setfromreading");
-	my $pollInterval = AttrVal($hash->{NAME}, 'poll_interval', 0);
+	my $pollInterval = AttrVal($hash->{NAME}, 'poll_interval', 0)*60;
 	Log3 $hash->{NAME}, 3, $hash->{NAME}." => Init: Timer interval $pollInterval";
-	InternalTimer(gettimeofday() + ($pollInterval * 60), 'I2C_ADS1x1x_Poll', $hash, 0) if ($pollInterval > 0);
+	InternalTimer(gettimeofday() + $pollInterval, 'I2C_ADS1x1x_Execute', $hash, 0) if ($pollInterval > 0);
 	return;
 }
 
