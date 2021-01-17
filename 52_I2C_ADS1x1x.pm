@@ -162,14 +162,12 @@ sub I2C_ADS1x1x_Get($@) {
 sub I2C_ADS1x1x_Execute($@) {
 	my ($hash) = @_;
 	my $state=$hash->{helper}{state};
-	my $device=AttrVal($hash->{NAME}, "device", "ADS1115");
-	my $channels=1;
+	my $channels=$hash->{helper}{channels};
 	#Default time between reading channels
 	my $nexttimer=AttrVal($hash->{NAME}, 'poll_interleave', 0.008);
 	my $interleave=$nexttimer;
 	if (!defined($state)) {$state=0};
 	if ($state%2 == 0) {$nexttimer=0.008;} #8 ms conversiontime for even numbers
-	if ($device =~ m/^ADS1[0|1]15$/i ) {$channels=4;} # Only these two devices have 4 channels
 	if ($state<($channels*2-1)) {
 		$hash->{helper}{state}+=1;	
 	} else {
