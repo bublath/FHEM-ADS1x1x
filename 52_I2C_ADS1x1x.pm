@@ -139,9 +139,7 @@ sub I2C_ADS1x1x_Set($@) {					#
 	if ( $cmd && $cmd eq "Update") {
 		#Make sure there is no reading cycle running and re-start polling (which starts with an inital read)
 		RemoveInternalTimer($hash) if ( defined (AttrVal($hash->{NAME}, "poll_interval", undef)) ); 
-		#readingsSingleUpdate($hash, 'state', 'Polling',0);
-		$hash->{helper}{state}=0; 
-		Log3 $hash->{NAME}, 3, $hash->{NAME}." => Update - reset state and restart time immediately";
+		$hash->{helper}{state}=0; #Reset state machine
 		InternalTimer(gettimeofday() + 1, 'I2C_ADS1x1x_Execute', $hash, 0);
 		return undef;
 	} else {
@@ -149,14 +147,15 @@ sub I2C_ADS1x1x_Set($@) {					#
 		return "Unknown argument $a[1], choose one of " . $list if defined $list;
 		return "Unknown argument $a[1]";
 	}
-	return "$name: no IO device defined" unless ($hash->{IODev});
+	if (!defined $hash->{IODev}) {
+		readingsSingleUpdate($hash, 'state', 'No IODev defined',0);
+		return "$name: no IO device defined";
+	}
   	return undef;
 }
 ################################### 
 sub I2C_ADS1x1x_Get($@) {
-	my ($hash) = @_;
-	Log3 $hash->{NAME}, 3, $hash->{NAME}." => Get";
-	$hash->{helper}{state}=0; #Reset states just in case
+	#Nothing to be done here, let all updates run asychroniously with timers
 	return undef;
 }
 
@@ -178,7 +177,7 @@ sub I2C_ADS1x1x_Execute($@) {
 		#Interleave to next complete read cycle is poll interval
 		$nexttimer = AttrVal($hash->{NAME}, 'poll_interval', 5)*60 - $channels*(0.008+$interleave); #Substract channel timers to have more or less constant interval
 	}
-	Log3 $hash->{NAME}, 3, $hash->{NAME}." => Processing state $state timer $nexttimer channels: $channels newstate:".$hash->{helper}{state};
+	Log3 $hash->{NAME}, 5, $hash->{NAME}." => Processing state $state timer $nexttimer channels: $channels newstate:".$hash->{helper}{state};
 	if (!defined AttrVal($hash->{NAME}, "IODev", undef)) {return;}
 	if ($state==0) {
 		I2C_ADS1x1x_InitConfig($hash,0);
@@ -208,28 +207,16 @@ sub I2C_ADS1x1x_InitConfig(@) {
 	my $phash = $hash->{IODev};
 	my $pname = $phash->{NAME};
 	my $mux=AttrVal($hash->{NAME}, "mux", "SINGLE");
-	my $device=AttrVal($hash->{NAME}, "device", "ADS1115");
-	my $rate=AttrVal($hash->{NAME}, "data_rate", "1x");
-	my $opmode=AttrVal($hash->{NAME}, "operation_mode", "SingleShot");
-	my $cmode=AttrVal($hash->{NAME}, "comparator_mode", "Traditional");
-	my $lcomp=AttrVal($hash->{NAME}, "latching_comparator", "on");
-	my $cqueue=AttrVal($hash->{NAME}, "comparator_queue_disable", "AfterOneConversion");
-	my $cpol=AttrVal($hash->{NAME}, "comparator_polarity", "ActiveLow");
 	return undef if ($mux ne "SINGLE"); #Only SINGLE mode supported
-	my $gain=AttrVal($hash->{NAME}, "a".$sensor."_gain", "4V"); 
+
 	my $mode=AttrVal($hash->{NAME}, "a".$sensor."_mode", "RAW");
-	my $sensval=$mux."_".$sensor;
+
 	if ($mode ne "off") {
-		Log3 $hash->{NAME}, 5, $hash->{NAME}." => $pname Config:".$sensval." ".$rate." ".$opmode." ".$cmode." ".$lcomp." ".$cqueue." ".$cpol;	
-		my $config = $I2C_ADS1x1x_Config{'State'}{SINGLE}|
+		my $sensval=$mux."_".$sensor;
+		my $gain=AttrVal($hash->{NAME}, "a".$sensor."_gain", "4V"); 
+		my $config = $hash->{helper}{configword}|
 			$I2C_ADS1x1x_Config{'Mux'}{$sensval}|
-			$I2C_ADS1x1x_Config{'Data_Rate'}{$rate}{code}|
-			$I2C_ADS1x1x_Config{'Gain'}{$gain}{code}|
-			$I2C_ADS1x1x_Config{'Operation_Mode'}{$opmode}|
-			$I2C_ADS1x1x_Config{'Comparator_Mode'}{$cmode}|
-			$I2C_ADS1x1x_Config{'Latching_Comparator'}{$lcomp}|
-			$I2C_ADS1x1x_Config{'Comparator_Queue_Disable'}{$cqueue}|				
-			$I2C_ADS1x1x_Config{'Comparator_Polarity'}{$cpol};
+			$I2C_ADS1x1x_Config{'Gain'}{$gain}{code};
 				
 		my $low_byte = $config & 0xff;
 		my $high_byte = ($config & 0xff00) >> 8;	
@@ -246,7 +233,7 @@ sub I2C_ADS1x1x_ReadData(@) {
 	#Gain needs to be passed through for calculation
 	my $gain=AttrVal($hash->{NAME}, "a".$sensor."_gain", "4V"); 
 	my %sendpackage = ( i2caddress => $hash->{I2C_Address}, direction => "i2cread", reg=> 0, sensor=>$sensor, gain=>$gain, nbyte => 2);
-	Log3 $hash->{NAME}, 4, $hash->{NAME}." => $pname READ adr:".$hash->{I2C_Address}." Sensor $sensor Gain $gain";
+	Log3 $hash->{NAME}, 5, $hash->{NAME}." => $pname READ adr:".$hash->{I2C_Address}." Sensor $sensor Gain $gain";
 	CallFn($pname, "I2CWrtFn", $phash, \%sendpackage);
 }
 
@@ -273,8 +260,14 @@ sub I2C_ADS1x1x_Attr(@) {					#
     } else {
       RemoveInternalTimer($hash);
     }
-	return $msg;
+  } elsif ($attr eq 'device') {
+	my $channels=1;
+	if (!defined $val or $val =~ m/^ADS1[0|1]15$/i ) {
+		$channels=4;  # Only these two devices have 4 channels
+	} 
+	$hash->{helper}{channels}=$channels;
   }
+
   #check for correct values while setting so we need no error handling later
   foreach ('sys_voltage','a0_res','a1_res','a2_res','a3_res', 'a0_r0', 'a1_r0', 'a2_r0', 'a3_r0', 'a0_bval', 'a1_bval', 'a2_bval', 'a3_bval') {
 	if ($attr eq $_) {
@@ -285,12 +278,12 @@ sub I2C_ADS1x1x_Attr(@) {					#
 		}
 	}
   }
+  I2C_ADS1x1x_Prepare($hash); #Update predefined variables so any attribute changes are reflected
   return $msg;	
 }
 ################################### 
 sub I2C_ADS1x1x_Define($$) {			#
  my ($hash, $def) = @_;
- Log3 $hash->{NAME}, 3, $hash->{NAME}." => Define";
  my @a = split("[ \t]+", $def);
  readingsSingleUpdate($hash, 'state', 'Defined',0);
  if ($main::init_done) {
@@ -304,8 +297,6 @@ sub I2C_ADS1x1x_Init($$) {				#
 	my ( $hash, $args ) = @_;
 	#my @a = split("[ \t]+", $args);
 	my $name = $hash->{NAME};
-	Log3 $hash->{NAME}, 3, $hash->{NAME}." => Init";
-	$hash->{helper}{state}=0; #initalize state machine
 	if (defined $args && int(@$args) != 1)	{
 		return "Define: Wrong syntax. Usage:\n" .
 		       "define <name> I2C_ADS1x1x <i2caddress>";
@@ -313,15 +304,38 @@ sub I2C_ADS1x1x_Init($$) {				#
 	if (defined (my $address = shift @$args)) {
 		$hash->{I2C_Address} = $address =~ /^0.*$/ ? oct($address) : $address; 
 	} else {
+		readingsSingleUpdate($hash, 'state', 'Invalid I2C Adress',0);
  		return "$name I2C Address not valid";
 	}
   	AssignIoPort($hash);
 	readingsSingleUpdate($hash, 'state', 'Initialized',0);
 	I2C_ADS1x1x_Set($hash, $name, "setfromreading");
+	I2C_ADS1x1x_Prepare($hash);
 	my $pollInterval = AttrVal($hash->{NAME}, 'poll_interval', 0)*60;
-	Log3 $hash->{NAME}, 3, $hash->{NAME}." => Init: Timer interval $pollInterval";
 	InternalTimer(gettimeofday() + $pollInterval, 'I2C_ADS1x1x_Execute', $hash, 0) if ($pollInterval > 0);
 	return;
+}
+
+sub I2C_ADS1x1x_Prepare($) {
+	my ($hash)=@_;
+	$hash->{helper}{state}=0; #initalize state machine
+	$hash->{helper}{channels}=4; #for default ADS1115, will be overwritten with different ATTR setting
+	my $mux=AttrVal($hash->{NAME}, "mux", "SINGLE");
+	my $device=AttrVal($hash->{NAME}, "device", "ADS1115");
+	my $rate=AttrVal($hash->{NAME}, "data_rate", "1x");
+	my $opmode=AttrVal($hash->{NAME}, "operation_mode", "SingleShot");
+	my $cmode=AttrVal($hash->{NAME}, "comparator_mode", "Traditional");
+	my $lcomp=AttrVal($hash->{NAME}, "latching_comparator", "on");
+	my $cqueue=AttrVal($hash->{NAME}, "comparator_queue_disable", "AfterOneConversion");
+	my $cpol=AttrVal($hash->{NAME}, "comparator_polarity", "ActiveLow");
+	my $config = $I2C_ADS1x1x_Config{'State'}{SINGLE}|
+		$I2C_ADS1x1x_Config{'Data_Rate'}{$rate}{code}|
+		$I2C_ADS1x1x_Config{'Operation_Mode'}{$opmode}|
+		$I2C_ADS1x1x_Config{'Comparator_Mode'}{$cmode}|
+		$I2C_ADS1x1x_Config{'Latching_Comparator'}{$lcomp}|
+		$I2C_ADS1x1x_Config{'Comparator_Queue_Disable'}{$cqueue}|				
+		$I2C_ADS1x1x_Config{'Comparator_Polarity'}{$cpol};
+	$hash->{helper}{configword}=$config;
 }
 
 ################################### 
@@ -514,10 +528,16 @@ sub I2C_ADS1x1x_I2CRec($@) {				# ueber CallFn vom physical aufgerufen
 			Note that the comparator feature is not supported by this module (so no difference between ADSxx13 and ADSxx14 is made).<br>
 			Default: ADS1115<br>
 		</li>
+		<br>
 		<li>poll_interval<br>
 			Set the polling interval in minutes to query a new reading from enabled channels<br>
 			Default: -, valid values: decimal number<br>
 		</li>
+		<br>
+		<li>poll_interleave<br>
+			Interleave between reading 2 channels in seconds (only valid for multi channel devices). Can be used to distribute the load more evenly.<br>
+			Default: 0.008, valid values: decimal number<br>
+		</li>	
 		<br>
 		<li>sys_voltage<br>
 			System voltage running the chip and typically connected to the pull-up resistor (e.g. 3.3V with a Raspberry Pi)<br>
