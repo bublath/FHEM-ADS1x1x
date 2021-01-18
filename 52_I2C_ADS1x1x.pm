@@ -434,16 +434,15 @@ sub I2C_ADS1x1x_I2CRec($@) {				# ueber CallFn vom physical aufgerufen
 			my $resistance=$divider*$voltage/($highvoltage-$voltage);
 			my $resistancer = sprintf( '%.' . AttrVal($name, 'decimals', 3) . 'f', $resistance 	);	
 			my $temperature=0;
+			my $mode=AttrVal($name,"a".$sensor."_mode","");
 			Log3 $hash,5 , "$name:resistance=$resistance, with divider=$divider system_voltage=$highvoltage";
-			if (AttrVal($name,"a".$sensor."_mode",0) eq "RES") {
+			if ($mode eq "RES") {
 				readingsBulkUpdate($hash, "a".$sensor."_resistance", $resistancer) if (ReadingsVal($name,"a".$sensor."_resistance",0) != $resistancer);
-			}
-			if (AttrVal($name,"a".$sensor."_mode",0) eq "RTD") {
+			} elsif ($mode eq "RTD") {
 				$temperature=sprintf( '%.1f', I2C_ADS1x1x_RTD($resistance,$sensor,AttrVal($name,"a".$sensor."_r0",1000.0)));
 				Log3 $hash,5 , "$name:RTD Temp=$temperature °C";
 				readingsBulkUpdate($hash, "a".$sensor."_temperature", $temperature) if (ReadingsVal($name,"a".$sensor."_temperature",0) != $temperature);
-			}
-			if (AttrVal($name,"a".$sensor."_mode",0) eq "NTC") {
+			} elsif ($mode eq "NTC") {
 				$temperature=sprintf( '%.1f', I2C_ADS1x1x_NTC($resistance,$sensor,AttrVal($name,"a".$sensor."_res",50000.0),AttrVal($name,"a".$sensor."_b",3950.0)));
 				Log3 $hash,5 , "$name:NTC Temp=$temperature °C";
 				readingsBulkUpdate($hash, "a".$sensor."_temperature", $temperature) if (ReadingsVal($name,"a".$sensor."_temperature",0) != $temperature);
