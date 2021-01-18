@@ -309,6 +309,7 @@ sub I2C_ADS1x1x_Init($$) {				#
 	readingsSingleUpdate($hash, 'state', 'Initialized',0);
 	I2C_ADS1x1x_Set($hash, $name, "setfromreading");
 	I2C_ADS1x1x_Prepare($hash);
+	RemoveInternalTimer($hash);
 	my $pollInterval = AttrVal($hash->{NAME}, 'poll_interval', 0)*60;
 	InternalTimer(gettimeofday() + $pollInterval, 'I2C_ADS1x1x_Execute', $hash, 0) if ($pollInterval > 0);
 	return;
