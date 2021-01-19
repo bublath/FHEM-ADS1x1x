@@ -1,5 +1,5 @@
 ##############################################
-# $Id: 52_I2C_ADS1x1x.pm$
+# $Id$
 # Credits:
 # Texas Instruments for the Chip - Documentation at https://www.ti.com/lit/ds/sbas444d/sbas444d.pdf (ADS111x) 
 #                                               and https://www.ti.com/lit/ds/sbas473e/sbas473e.pdf (ADS101x)
@@ -13,11 +13,6 @@ use strict;
 use warnings;
 use SetExtensions;
 use Scalar::Util qw(looks_like_number);
-
-my %setsP = (
-'off' => 0,
-'on' => 1,
-);
 
 my %I2C_ADS1x1x_Config =
 (
@@ -140,7 +135,7 @@ sub I2C_ADS1x1x_Set($@) {					#
 		#Make sure there is no reading cycle running and re-start polling (which starts with an inital read)
 		RemoveInternalTimer($hash) if ( defined (AttrVal($hash->{NAME}, "poll_interval", undef)) ); 
 		$hash->{helper}{state}=0; #Reset state machine
-		InternalTimer(gettimeofday() + 1, 'I2C_ADS1x1x_Execute', $hash, 0);
+		InternalTimer(gettimeofday() + 0.01, 'I2C_ADS1x1x_Execute', $hash, 0);
 		return undef;
 	} else {
 		my $list = "Update:noArg";
@@ -196,7 +191,7 @@ sub I2C_ADS1x1x_Execute($@) {
 	}
 	
 	#Initalize next Timer for Reading Results in 8ms (time required for conversion to be ready)
-	InternalTimer(gettimeofday()+$nexttimer, \&I2C_ADS1x1x_Execute, $hash,0);
+	InternalTimer(gettimeofday()+$nexttimer, \&I2C_ADS1x1x_Execute, $hash,0) unless $nexttimer<=0;
 	return undef;
 }
 
@@ -249,11 +244,11 @@ sub I2C_ADS1x1x_Attr(@) {					#
 	}
   if ($attr eq 'poll_interval') {
     if ( defined($val) ) {
-      if ( looks_like_number($val) && $val > 0) {
+      if ( looks_like_number($val) && $val >= 0) {
         RemoveInternalTimer($hash);
-        InternalTimer(1, 'I2C_ADS1x1x_Execute', $hash, 0);
+        InternalTimer(1, 'I2C_ADS1x1x_Execute', $hash, 0) if $val>0;
       } else {
-        $msg = "$hash->{NAME}: Wrong poll intervall defined. poll_interval must be a number > 0";
+        $msg = "$hash->{NAME}: Wrong poll intervall defined. poll_interval must be a number >= 0";
       }    
     } else {
       RemoveInternalTimer($hash);
@@ -310,7 +305,7 @@ sub I2C_ADS1x1x_Init($$) {				#
 	I2C_ADS1x1x_Set($hash, $name, "setfromreading");
 	I2C_ADS1x1x_Prepare($hash);
 	RemoveInternalTimer($hash);
-	my $pollInterval = AttrVal($hash->{NAME}, 'poll_interval', 0)*60;
+	my $pollInterval = AttrVal($hash->{NAME}, 'poll_interval', 5)*60;
 	InternalTimer(gettimeofday() + $pollInterval, 'I2C_ADS1x1x_Execute', $hash, 0) if ($pollInterval > 0);
 	return;
 }
@@ -460,8 +455,8 @@ sub I2C_ADS1x1x_I2CRec($@) {				# ueber CallFn vom physical aufgerufen
 
 =pod
 =item device
-=item summary controls/reads GPIOs from an via I2C connected ADS1x1x port extender
-=item summary_DE steuern/lesen der GPIOs eines &uuml;ber I2C angeschlossenen ADS1x1x
+=item summary reads/converts data from an via I2C connected ADS1x1x A/D converter
+=item summary_DE liest/konvertiert Daten eines via angeschlossenen ADS1x1x A/D Wandlers
 =begin html
 
 <a name="I2C_ADS1x1x"></a>
@@ -529,6 +524,7 @@ sub I2C_ADS1x1x_I2CRec($@) {				# ueber CallFn vom physical aufgerufen
 		<br>
 		<li>poll_interval<br>
 			Set the polling interval in minutes to query a new reading from enabled channels<br>
+			By setting this number to 0, the device can be set to manual mode (new readings only by "set update").<br>
 			Default: -, valid values: decimal number<br>
 		</li>
 		<br>
