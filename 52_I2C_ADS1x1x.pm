@@ -135,7 +135,7 @@ sub I2C_ADS1x1x_Set($@) {					#
 		#Make sure there is no reading cycle running and re-start polling (which starts with an inital read)
 		RemoveInternalTimer($hash) if ( defined (AttrVal($hash->{NAME}, "poll_interval", undef)) ); 
 		$hash->{helper}{state}=0; #Reset state machine
-		InternalTimer(gettimeofday() + 0.01, 'I2C_ADS1x1x_Execute', $hash, 0);
+		InternalTimer(gettimeofday() + 1, 'I2C_ADS1x1x_Execute', $hash, 0);
 		return undef;
 	} else {
 		my $list = "Update:noArg";
@@ -246,7 +246,7 @@ sub I2C_ADS1x1x_Attr(@) {					#
     if ( defined($val) ) {
       if ( looks_like_number($val) && $val >= 0) {
         RemoveInternalTimer($hash);
-        InternalTimer(1, 'I2C_ADS1x1x_Execute', $hash, 0) if $val>0;
+        InternalTimer(gettimeofday()+1, 'I2C_ADS1x1x_Execute', $hash, 0) if $val>0;
       } else {
         $msg = "$hash->{NAME}: Wrong poll intervall defined. poll_interval must be a number >= 0";
       }    
@@ -467,13 +467,14 @@ sub I2C_ADS1x1x_I2CRec($@) {				# ueber CallFn vom physical aufgerufen
 		Provides an interface to an ADS1x1x A/D converter via I2C.<br>
 		The I2C messages are send through an I2C interface module like <a href="#RPII2C">RPII2C</a>, <a href="#FRM">FRM</a>
 		or <a href="#NetzerI2C">NetzerI2C</a> so this device must be defined first.<br><br>
-		<b>Limitations:</b><br><br>
+		<b>Limitations:</b><br>
 		For simplification most settings can only be set for all 4 channels globally.<br>
-		Comparator Mode (delta between two channels) is not supported.<br><br>
-		<b>Special features:</b><br>
+		Comparator Mode (delta between two channels) is not supported.<br>
+		Temperatures are in centigrade only<br><br>
+		<br><b>Special features:</b><br>
 		Device supports reading voltages (RAW), resistance (RES) with divider resistor and temperature measurements of RTD (Platin Resistors like PT1000 or PT100) and NTC.
 		<br>
-		<b>Circuit:</b>
+		<br><b>Circuit:</b><br>
 		To measure resistance and temperature (thermistors) your circuit should look like this:
 		<br>
 		<code>
@@ -486,7 +487,7 @@ sub I2C_ADS1x1x_I2CRec($@) {				# ueber CallFn vom physical aufgerufen
 		 A0= Connected to A0 Port of ADS1x1x (same for A1,A2,A3)<br>
 		</code>
 		<br>
-		<br><b>Attribute IODev must be set.</b><br>         
+		<br><b>Attribute <a href="#IODev">IODev</a> must be set. This is typically the name of a defined <a href="#RPII2C">RPII2C</a> device </b><br>         
 	<a name="I2C_ADS1x1xDefine"></a><br>
 	<b>Define</b>
 	<ul>
@@ -498,91 +499,123 @@ sub I2C_ADS1x1x_I2CRec($@) {				# ueber CallFn vom physical aufgerufen
 	<a name="I2C_ADS1x1xSet"></a>
 	<b>Set</b>
 	<ul>
-		<code>set &lt;name&gt; &lt;Update&gt;</code><br><br>
-			<ul>
-			<li>Trigger a reading<br>
-			</ul>
+		<li><b>update</b><br>
+		<a name="update"></a>
+		<code>set &lt;name&gt; update</code><br>
+		Trigger a reading. Resets the timers so the first reading will start within 1s - 
+		continuing with the other channels based on the polling_interleave attribute.<br>
 		<br>
+		</li>
 	</ul>
 
 	<a name="I2C_ADS1x1xAttr"></a>
 	<b>Attributes</b>
 	<ul>
-		<li>device<br>
+	    
+		<li><b>device</b><br>
+			<a name="device"></a>
 			Defines the Texas Instruments ADS1x1x device that is actually being used.
+			<ul>
+				<li>ADS1013 - 12Bit, 1 channel<br>
+				<li>ADS1014 - 12Bit, 1 channel with Comparator<br>
+				<li>ADS1015 - 12Bit, 4 channels with Comparator<br>
+				<li>ADS1113 - 16Bit, 1 channel<br>
+				<li>ADS1114 - 16Bit, 1 channel with Comparator<br>
+				<li>ADS1115 - 16Bit, 4 channels with Comparator<br>
+			</ul>
 			<br>
-			<li>ADS1013 - 12Bit, 1 channel<br>
-			<li>ADS1014 - 12Bit, 1 channel with Comparator<br>
-			<li>ADS1015 - 12Bit, 4 channels with Comparator<br>
-			<li>ADS1113 - 16Bit, 1 channel<br>
-			<li>ADS1114 - 16Bit, 1 channel with Comparator<br>
-			<li>ADS1115 - 16Bit, 4 channels with Comparator<br>
-			<br>
-			Note that the comparator feature is not supported by this module (so no difference between ADSxx13 and ADSxx14 is made).<br>
-			Default: ADS1115<br>
+			Note that the comparator feature is not supported by this module 
+			(so no difference between ADSxx13 and ADSxx14 is made).<br>
+			<b>Default:</b> ADS1115<br>
 		</li>
 		<br>
-		<li>poll_interval<br>
+		<li><b>poll_interval</b><br>
+			<a name="poll_interval"></a>
 			Set the polling interval in minutes to query a new reading from enabled channels<br>
 			By setting this number to 0, the device can be set to manual mode (new readings only by "set update").<br>
-			Default: -, valid values: decimal number<br>
+			<b>Default:</b> 5, valid values: decimal number<br>
 		</li>
 		<br>
-		<li>poll_interleave<br>
-			Interleave between reading 2 channels in seconds (only valid for multi channel devices). Can be used to distribute the load more evenly.<br>
-			Default: 0.008, valid values: decimal number<br>
+		<li><b>poll_interleave</b><br>
+			<a name="poll_interleave"></a>
+			Interleave between reading 2 channels in seconds (only valid for multi channel devices). 
+			Can be used to distribute the load more evenly.<br>
+			<b>Default</b>: 0.008, valid values: decimal number<br>
 		</li>	
 		<br>
-		<li>sys_voltage<br>
+		<li><b>sys_voltage</b><br>
+			<a name="sys_voltage"></a>
 			System voltage running the chip and typically connected to the pull-up resistor (e.g. 3.3V with a Raspberry Pi)<br>
-			Default: 3.3, valid values: float number<br>
+			<b>Default:</b> 3.3, valid values: float number<br>
 		</li>
 		<br>
-		<li>decimals<br>
-			Number of decimals (after the decimal point) for voltage and resistance to make results more readable. Calculations are still based on full precision. Temperatures are fixed to one decimal.<br>
-			Default: 3, valid values: 0,1,2,3,4,5<br>
+		<li><b>decimals</b><br>
+			<a name="decimals"></a>
+			Number of decimals (after the decimal point) for voltage and resistance to make results more readable. 
+			Calculations are still based on full precision. Temperatures are fixed to one decimal.<br>
+			<b>Default:</b> 3, valid values: 0,1,2,3,4,5<br>
 		</li>
 		<br>
-		<li>a[0-3]_gain<br>
-			Gain amplifier value (sensibility and range of measurement) used per channel a0-a3. Standard is 4V which can measure a range between 0 and 4 Volts. If measuring smaller voltage, the amplification can be increased to get more accurate readings. The module will automatically calculate the value back to the correct voltage output.<br>
-			Default: 4V, valid values: 6V,4V,2V,1V,0.5V,0.25V<br>
+		<li><b>a[0-3]_gain</b><br>
+			<a name="a0_gain"></a>
+			<a name="a1_gain"></a>
+			<a name="a2_gain"></a>
+			<a name="a3_gain"></a>
+			Gain amplifier value (sensibility and range of measurement) used per channel a0-a3. 
+			Standard is 4V which can measure a range between 0 and 4 Volts. 
+			If measuring smaller voltage, the amplification can be increased to get more accurate readings. 
+			The module will automatically calculate the value back to the correct voltage output.<br>
+			<b>Default:</b> 4V, valid values: 6V,4V,2V,1V,0.5V,0.25V<br>
 		</li>
 		<br>
-		<li>a[0-3]_mode<br>
+		<li><b>a[0-3]_mode</b><br>
+			<a name="a0_mode"></a>
+			<a name="a1_mode"></a>
+			<a name="a2_mode"></a>
+			<a name="a3_mode"></a>
 			Determines how the results are interpreted.
 			<ul>
 			<li>off: The channel is not measured<br>
 			<li>RAW: Only voltage is measured and placed in reading a[0-3]_voltage<br>
-			<li>RES: Plain resistor measurement, typically needs a pull-up resistor defined by a[0-3]_res. Reading in a[0-3]_resistance<br>
-			<li>RTD: For Platin temperature resistors (PT1000,PT100), like RES needs a pull-up and also reference resistance at 0°C in a[0-3]_r0. Reading in a[0-3]_temperature<br>
-			<li>NTC: For NTC Thermistors, like RES needs a pull-up, reference resistance at 25°C in a[0-3]_r0 and B-value in a[0-3]_b. Reading in a[0-3]_temperature<br>
+			<li>RES: Plain resistor measurement, typically needs a pull-up resistor defined by a[0-3]_res. 
+					 Reading in a[0-3]_resistance<br>
+			<li>RTD: For Platin temperature resistors (PT1000,PT100), like RES needs a pull-up and also reference resistance at 0°C in a[0-3]_r0. 
+			         Reading in a[0-3]_temperature<br>
+			<li>NTC: For NTC Thermistors, like RES needs a pull-up, reference resistance at 25°C in a[0-3]_r0 and B-value in a[0-3]_b. 
+			         Reading in a[0-3]_temperature<br>
 			</ul>
 		</li>
 		<br>		
-		<li>a[0-3]_res<br>
+		<li><b>a[0-3]_res</b><br>
+			<a name="a0_res"></a>
+			<a name="a1_res"></a>
+			<a name="a2_res"></a>
+			<a name="a3_res"></a>
 			Value of pull-up resistor for resistance and temperature measurement. Connected between A0 and VCC (defined in "sys_voltage")<br>
-			Default: 1000, valid values: float numbers<br>
+			<b>Default:</b> 1000, valid values: float numbers<br>
 		</li>
 		<br>		
-		<li>a[0-3]_r0<br>
+		<li><b>a[0-3]_r0</b><br>
+			<a name="a0_r0"></a>
+			<a name="a1_r0"></a>
+			<a name="a2_r0"></a>
+			<a name="a3_r0"></a>
 			Reference resistance for temperature measurements at 0°C (for RTD) and 25°C (for NTC) in Ohm.<br>
-			Default: 1000.0 in RTD and 50000.0 in NTC mode, valid values: float numbers<br>
+			<b>Default:</b> 1000.0 in RTD and 50000.0 in NTC mode, valid values: float numbers<br>
 		</li>
 		<br>		
-		<li>a[0-3]_b<br>
+		<li><b>a[0-3]_bval</b><br>
+			<a name="a0_bval"></a>
+			<a name="a1_bval"></a>
+			<a name="a2_bval"></a>
+			<a name="a3_bval"></a>
 			B-Value for NTC Thermistors (define the increase from the base value).<br>
-			Default: 3950.0, valid values: float numbers<br>
+			<b>Default</b>: 3950.0, valid values: float numbers<br>
 		</li>
 		<br>		
-		<li>operation_mode<br>
-			<ul>
-			Not implemented, since Continuous Mode make no sense when using multiple input registers and is meant to read values in very high speed (e.g. one value every 8 ms) which IMHO makes no sense with FHEM.<br> 
-			<li>SingleShot: Do one reading and then power down<br>
-			<li>Continuously: Keep powered on and continiously read data<br>
-			</ul>
-		</li>
 		<br>
-		<li>data_rate (1/16x,1/8x,1/4x,1/2x,1x,2x,4x,8x )<br>
+		<li><b>data_rate (1/16x,1/8x,1/4x,1/2x,1x,2x,4x,8x )</b><br>
+			<a name="data_rate"></a>
 			<ul>
 			Conversion speed - default is 1x. The 12-bit chips use 1600 SPS as default rate, while the 16-bit chips are slower with 128 SPS. 
 			Below table translates the settings based on the actual device used.<br>
@@ -632,30 +665,39 @@ sub I2C_ADS1x1x_I2CRec($@) {				# ueber CallFn vom physical aufgerufen
 				<td>3300_SPS</td>
 				<td>860_SPS</td>
 			</tr>
-      </table>
-			
+			</table>
 			</ul>
 		</li>
 
 		<br><br>
 	</ul>	
-	The following entries are only valid in comparator mode and with thresholds which are currently disabled or not implemented, since my use case is a plain 4-channel A/D conversion.<br>
+	The following entries are only valid in comparator mode and with thresholds which are currently disabled or not implemented, 
+	since my use case is a plain 4-channel A/D conversion.<br>
 	Please refer to ADS1x1x chip documentation for more details on the effect of these settings.<br>
+	If you have a valid use case, please contact me in the FHEM forum to discuss a potential implementation.<br>
 	<br>
 	<ul>
-		<li>comparator_mode(Traditional|Window)<br>
+		<li><b>operation_mode</b><br>
+			<a name="operation_mode"></a>
+			<ul>
+			Not implemented, since Continuous Mode make no sense when using multiple input registers and is meant to read values in very high speed (e.g. one value every 8 ms) which IMHO makes no sense with FHEM.<br> 
+			<li>SingleShot: Do one reading and then power down<br>
+			<li>Continuously: Keep powered on and continiously read data<br>
+			</ul>
+		</li>
+		<li><b>comparator_mode</b> (Traditional|Window)<br>
 			<ul>
 			Not implemented.
 			</ul>
 		</li>
 		<br>
-		<li>comparator_polarity (ActiveHigh|ActiveLow)<br>
+		<li><b>comparator_polarity</b> (ActiveHigh|ActiveLow)<br>
 			<ul>
 			Not implemented.
 			</ul>
 		</li>
 		<br>
-		<li>comparator_queue_disable (AfterOneConversion|AfterTwoConversions|AfterFourConversions|disable)<br>
+		<li><b>comparator_queue_disable</b> (AfterOneConversion|AfterTwoConversions|AfterFourConversions|disable)<br>
 			<ul>
 			Define for how many conversions the chip remains active (powered on)<br>
 			</ul>
@@ -668,13 +710,8 @@ sub I2C_ADS1x1x_I2CRec($@) {				# ueber CallFn vom physical aufgerufen
 		</li>
 		<br>			
 		<br>			
-		
-		
-		<li><a href="#IODev">IODev</a></li>
-		<li><a href="#ignore">ignore</a></li>
-		<li><a href="#do_not_notify">do_not_notify</a></li>
-		<li><a href="#showtime">showtime</a></li>
-	</ul>
+	</ul>	
+	<br>
 	<br>
 </ul>
 
@@ -705,12 +742,8 @@ sub I2C_ADS1x1x_I2CRec($@) {				# ueber CallFn vom physical aufgerufen
 	<ul>
 		<li>poll_interval<br>
 			Aktualisierungsintervall aller Werte in Minuten.<br>
-			Standard: -, g&uuml;ltige Werte: Dezimalzahl<br><br>
+			Standard: 5, g&uuml;ltige Werte: Dezimalzahl<br><br>
 		</li>
-		<li><a href="#IODev">IODev</a></li>
-		<li><a href="#ignore">ignore</a></li>
-		<li><a href="#do_not_notify">do_not_notify</a></li>
-		<li><a href="#showtime">showtime</a></li>
 	</ul>
 	<br>
 </ul>
